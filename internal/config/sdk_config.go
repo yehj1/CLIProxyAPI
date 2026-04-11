@@ -25,6 +25,10 @@ type SDKConfig struct {
 	// APIKeyEntries provides per-key metadata such as expiry and daily token limits.
 	APIKeyEntries []APIKeyEntry `yaml:"api-key-entries,omitempty" json:"api-key-entries,omitempty"`
 
+	// CreditPerMillionTokens sets the conversion rate from tokens to credits.
+	// Example: 6 means every 1,000,000 tokens costs 6 credits (rounded up per request).
+	CreditPerMillionTokens int64 `yaml:"credit-per-million-tokens,omitempty" json:"credit-per-million-tokens,omitempty"`
+
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
 	PassthroughHeaders bool `yaml:"passthrough-headers" json:"passthrough-headers"`
@@ -42,6 +46,7 @@ type APIKeyEntry struct {
 	APIKey          string `yaml:"api-key" json:"api-key"`
 	ExpiresAt       string `yaml:"expires-at,omitempty" json:"expires-at,omitempty"`
 	DailyTokenLimit int64  `yaml:"daily-token-limit,omitempty" json:"daily-token-limit,omitempty"`
+	DailyCreditLimit int64 `yaml:"daily-credit-limit,omitempty" json:"daily-credit-limit,omitempty"`
 }
 
 // BuildAPIKeyEntries merges legacy api-keys with api-key-entries, trimming and de-duplicating.
@@ -59,6 +64,9 @@ func BuildAPIKeyEntries(keys []string, entries []APIKeyEntry) []APIKeyEntry {
 		entry.ExpiresAt = strings.TrimSpace(entry.ExpiresAt)
 		if entry.DailyTokenLimit < 0 {
 			entry.DailyTokenLimit = 0
+		}
+		if entry.DailyCreditLimit < 0 {
+			entry.DailyCreditLimit = 0
 		}
 		if idx, exists := index[key]; exists {
 			if allowReplace {

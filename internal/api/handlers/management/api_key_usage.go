@@ -43,14 +43,29 @@ func (h *Handler) GetAPIKeyUsage(c *gin.Context) {
 
 	loc := limits.DailyTokenLimitLocation()
 	now := time.Now().In(loc)
-	used := limits.GetDailyTokenLimiter().TokensUsed(apiKey, now)
+	usedTokens := limits.GetDailyTokenLimiter().TokensUsed(apiKey, now)
+	usedCredits := limits.GetDailyCreditLimiter().CreditsUsed(apiKey, now)
+	creditMode := limits.CreditPerMillionTokens() > 0
+	dailyCreditLimit := entry.DailyCreditLimit
+	if creditMode && dailyCreditLimit <= 0 && entry.DailyTokenLimit > 0 {
+		// Compatibility: treat daily-token-limit as credits when credit mode is enabled.
+		dailyCreditLimit = entry.DailyTokenLimit
+	}
 	limitEnabled := entry.DailyTokenLimit > 0
 	remaining := int64(0)
 	if limitEnabled {
-		remaining = entry.DailyTokenLimit - used
+		remaining = entry.DailyTokenLimit - usedTokens
 		if remaining < 0 {
 			remaining = 0
 		}
+	}
+	displayLimit := entry.DailyTokenLimit
+	displayUsed := usedTokens
+	displayRemaining := remaining
+	if creditMode {
+		displayLimit = dailyCreditLimit
+		displayUsed = usedCredits
+		displayRemaining = remainingCredits(dailyCreditLimit, usedCredits)
 	}
 
 	expiresAtRaw := strings.TrimSpace(entry.ExpiresAt)
@@ -70,19 +85,36 @@ func (h *Handler) GetAPIKeyUsage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"api-key":                 apiKey,
-		"used-tokens-today":       used,
-		"daily-token-limit":       entry.DailyTokenLimit,
-		"limit-enabled":           limitEnabled,
-		"remaining-tokens-today":  remaining,
-		"expires-at":              expiresAtRaw,
-		"expires-at-parsed":       expiresAtParsed,
-		"expired":                 expired,
-		"timezone":                loc.String(),
-		"date":                    now.Format("2006-01-02"),
-		"next-reset-at":           nextReset.Format(time.RFC3339),
-		"seconds-until-reset":     secondsUntilReset,
+		"api-key":                   apiKey,
+		"used-tokens-today":         displayUsed,
+		"daily-token-limit":         displayLimit,
+		"limit-enabled":             limitEnabled,
+		"remaining-tokens-today":    displayRemaining,
+		"daily-credit-limit":        dailyCreditLimit,
+		"used-credits-today":        usedCredits,
+		"remaining-credits-today":   remainingCredits(dailyCreditLimit, usedCredits),
+		"credit-per-million-tokens": limits.CreditPerMillionTokens(),
+		"credit-unit-tokens":        limits.CreditUnitTokens(),
+		"credit-mode":               creditMode,
+		"expires-at":                expiresAtRaw,
+		"expires-at-parsed":         expiresAtParsed,
+		"expired":                   expired,
+		"timezone":                  loc.String(),
+		"date":                      now.Format("2006-01-02"),
+		"next-reset-at":             nextReset.Format(time.RFC3339),
+		"seconds-until-reset":       secondsUntilReset,
 	})
+}
+
+func remainingCredits(limit, used int64) int64 {
+	if limit <= 0 {
+		return 0
+	}
+	remaining := limit - used
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
 
 func parseExpiresAtInLocation(value string, loc *time.Location) (time.Time, bool) {

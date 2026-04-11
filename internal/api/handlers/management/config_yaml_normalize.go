@@ -136,11 +136,23 @@ func parseAPIKeyEntry(node *yaml.Node) (config.APIKeyEntry, bool, error) {
 		entry.DailyTokenLimit = value
 	}
 
+	dailyCredit := mappingScalarValue(node, "daily-credit-limit")
+	dailyCredit = strings.TrimSpace(dailyCredit)
+	if dailyCredit != "" {
+		value, err := strconv.ParseInt(dailyCredit, 10, 64)
+		if err != nil {
+			return config.APIKeyEntry{}, false, fmt.Errorf("invalid daily-credit-limit for api key %s: %v", key, err)
+		}
+		entry.DailyCreditLimit = value
+	}
+
 	expiresAt := strings.TrimSpace(mappingScalarValue(node, "expires-at"))
 	if expiresAt != "" {
 		entry.ExpiresAt = expiresAt
 	}
 
+	// If daily credit limit is set without a token limit, avoid accidental hard blocks.
+	// Tokens are always tracked for auth; credit limit is enforced independently.
 	return entry, true, nil
 }
 
@@ -271,6 +283,12 @@ func setAPIKeyEntries(root *yaml.Node, entries []config.APIKeyEntry) {
 			item.Content = append(item.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "daily-token-limit"},
 				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.FormatInt(entry.DailyTokenLimit, 10)},
+			)
+		}
+		if entry.DailyCreditLimit > 0 {
+			item.Content = append(item.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "daily-credit-limit"},
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.FormatInt(entry.DailyCreditLimit, 10)},
 			)
 		}
 		if strings.TrimSpace(entry.ExpiresAt) != "" {

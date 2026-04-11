@@ -261,6 +261,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	if authManager != nil {
 		authManager.SetRetryConfig(cfg.RequestRetry, time.Duration(cfg.MaxRetryInterval)*time.Second, cfg.MaxRetryCredentials)
 	}
+	limits.SetCreditPerMillionTokens(cfg.CreditPerMillionTokens)
 	managementasset.SetCurrentConfig(cfg)
 	auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	// Initialize management handler
@@ -911,6 +912,10 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 		usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
 	}
 
+	if oldCfg == nil || oldCfg.CreditPerMillionTokens != cfg.CreditPerMillionTokens {
+		limits.SetCreditPerMillionTokens(cfg.CreditPerMillionTokens)
+	}
+
 	if s.requestLogger != nil && (oldCfg == nil || oldCfg.ErrorLogsMaxFiles != cfg.ErrorLogsMaxFiles) {
 		if setter, ok := s.requestLogger.(interface{ SetErrorLogsMaxFiles(int) }); ok {
 			setter.SetErrorLogsMaxFiles(cfg.ErrorLogsMaxFiles)
@@ -1080,6 +1085,34 @@ func enforceAPIKeyLimits(apiKey string, metadata map[string]string) (bool, int, 
 			log.Warnf("authentication: invalid expires-at value for api key %s", redactKey(apiKey))
 		}
 	}
+	creditMode := limits.CreditPerMillionTokens() > 0
+	dailyCreditLimitStr := strings.TrimSpace(metadata["daily-credit-limit"])
+	if creditMode && dailyCreditLimitStr == "" {
+		// Compatibility: treat daily-token-limit as credits when credit mode is enabled.
+		dailyCreditLimitStr = strings.TrimSpace(metadata["daily-token-limit"])
+	}
+	if creditMode {
+		if dailyCreditLimitStr != "" {
+			dailyCreditLimit, err := strconv.ParseInt(dailyCreditLimitStr, 10, 64)
+			if err != nil || dailyCreditLimit <= 0 {
+				if err != nil {
+					log.Warnf("authentication: invalid daily-credit-limit for api key %s: %v", redactKey(apiKey), err)
+				}
+				return false, 0, nil
+			}
+			usedCredits := limits.GetDailyCreditLimiter().CreditsUsed(apiKey, time.Now())
+			if usedCredits >= dailyCreditLimit {
+				return true, http.StatusTooManyRequests, gin.H{
+					"error":   "daily_credit_limit_exceeded",
+					"message": "Daily credit limit exceeded",
+					"limit":   dailyCreditLimit,
+					"used":    usedCredits,
+				}
+			}
+		}
+		return false, 0, nil
+	}
+
 	if dailyLimitStr := strings.TrimSpace(metadata["daily-token-limit"]); dailyLimitStr != "" {
 		dailyLimit, err := strconv.ParseInt(dailyLimitStr, 10, 64)
 		if err != nil || dailyLimit <= 0 {

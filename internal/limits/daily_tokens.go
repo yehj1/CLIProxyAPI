@@ -68,7 +68,7 @@ func (l *DailyTokenLimiter) dayKey(at time.Time) string {
 		at = time.Now()
 	}
 	loc := l.location()
-	return at.In(loc).Format("2006-01-02")
+	return dayKeyForLocation(at, loc)
 }
 
 func (l *DailyTokenLimiter) pruneOldDays(perKey map[string]int64, currentDay string) {
@@ -79,7 +79,33 @@ func (l *DailyTokenLimiter) pruneOldDays(perKey map[string]int64, currentDay str
 		if k == currentDay {
 			continue
 		}
-		if day, err := time.ParseInLocation("2006-01-02", k, l.location()); err == nil {
+		pruneOldDaysForLocation(perKey, currentDay, l.location())
+		break
+	}
+}
+
+func dayKeyForLocation(at time.Time, loc *time.Location) string {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	return at.In(loc).Format("2006-01-02")
+}
+
+func pruneOldDaysForLocation(perKey map[string]int64, currentDay string, loc *time.Location) {
+	if len(perKey) == 0 {
+		return
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	for k := range perKey {
+		if k == currentDay {
+			continue
+		}
+		if day, err := time.ParseInLocation("2006-01-02", k, loc); err == nil {
 			if time.Since(day) > 45*24*time.Hour {
 				delete(perKey, k)
 			}

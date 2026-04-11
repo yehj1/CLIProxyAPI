@@ -35,8 +35,29 @@ func (p *dailyTokenUsagePlugin) HandleUsage(_ context.Context, record coreusage.
 		ts = time.Now()
 	}
 	p.limiter.AddTokens(apiKey, tokens, ts)
+
+	rate := CreditPerMillionTokens()
+	if rate > 0 {
+		credits := tokensToCredits(tokens, rate)
+		if credits > 0 {
+			GetDailyCreditLimiter().AddCredits(apiKey, credits, ts)
+		}
+	}
 }
 
 func init() {
 	coreusage.RegisterPlugin(NewDailyTokenUsagePlugin(GetDailyTokenLimiter()))
+}
+
+func tokensToCredits(tokens, rate int64) int64 {
+	if tokens <= 0 || rate <= 0 {
+		return 0
+	}
+	unit := CreditUnitTokens()
+	if unit <= 0 {
+		return 0
+	}
+	// ceil(tokens / unit) * rate
+	units := (tokens + unit - 1) / unit
+	return units * rate
 }

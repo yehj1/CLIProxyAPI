@@ -104,6 +104,9 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 			if entry.DailyTokenLimit > 0 {
 				metadata["daily-token-limit"] = strconv.FormatInt(entry.DailyTokenLimit, 10)
 			}
+			if entry.DailyCreditLimit > 0 {
+				metadata["daily-credit-limit"] = strconv.FormatInt(entry.DailyCreditLimit, 10)
+			}
 			return &sdkaccess.Result{
 				Provider:  p.Identifier(),
 				Principal: candidate.value,

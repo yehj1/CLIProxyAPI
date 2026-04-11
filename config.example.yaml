@@ -39,6 +39,16 @@ auth-dir: "~/.cli-proxy-api"
 api-keys:
   - "your-api-key-1"
   - "your-api-key-2"
+
+# Optional per-key limits (recommended when using credits)
+# api-key-entries:
+#   - api-key: "your-api-key-1"
+#     daily-credit-limit: 600
+#     expires-at: "2026-04-12 00:00:00"
+
+# Credit conversion rate: credits per 1,000,000 tokens (rounded up per request).
+# Example: 6 means each 1M tokens costs 6 credits.
+# credit-per-million-tokens: 6
   - "your-api-key-3"
 
 # Enable debug logging
