@@ -4,6 +4,8 @@
 // debug settings, proxy configuration, and API keys.
 package config
 
+import "strings"
+
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
@@ -20,6 +22,9 @@ type SDKConfig struct {
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 
+	// APIKeyEntries provides per-key metadata such as expiry and daily token limits.
+	APIKeyEntries []APIKeyEntry `yaml:"api-key-entries,omitempty" json:"api-key-entries,omitempty"`
+
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
 	PassthroughHeaders bool `yaml:"passthrough-headers" json:"passthrough-headers"`
@@ -30,6 +35,49 @@ type SDKConfig struct {
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+}
+
+// APIKeyEntry defines metadata for a client API key.
+type APIKeyEntry struct {
+	APIKey          string `yaml:"api-key" json:"api-key"`
+	ExpiresAt       string `yaml:"expires-at,omitempty" json:"expires-at,omitempty"`
+	DailyTokenLimit int64  `yaml:"daily-token-limit,omitempty" json:"daily-token-limit,omitempty"`
+}
+
+// BuildAPIKeyEntries merges legacy api-keys with api-key-entries, trimming and de-duplicating.
+// Explicit entries take precedence over legacy keys.
+func BuildAPIKeyEntries(keys []string, entries []APIKeyEntry) []APIKeyEntry {
+	result := make([]APIKeyEntry, 0, len(keys)+len(entries))
+	index := make(map[string]int, len(keys)+len(entries))
+
+	add := func(entry APIKeyEntry, allowReplace bool) {
+		key := strings.TrimSpace(entry.APIKey)
+		if key == "" {
+			return
+		}
+		entry.APIKey = key
+		entry.ExpiresAt = strings.TrimSpace(entry.ExpiresAt)
+		if entry.DailyTokenLimit < 0 {
+			entry.DailyTokenLimit = 0
+		}
+		if idx, exists := index[key]; exists {
+			if allowReplace {
+				result[idx] = entry
+			}
+			return
+		}
+		index[key] = len(result)
+		result = append(result, entry)
+	}
+
+	for _, key := range keys {
+		add(APIKeyEntry{APIKey: key}, false)
+	}
+	for _, entry := range entries {
+		add(entry, true)
+	}
+
+	return result
 }
 
 // StreamingConfig holds server streaming behavior configuration.

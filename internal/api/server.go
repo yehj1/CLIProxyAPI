@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
 	ampmodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/amp"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/limits"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -1044,6 +1046,10 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 				if len(result.Metadata) > 0 {
 					c.Set("accessMetadata", result.Metadata)
 				}
+				if blocked, status, payload := enforceAPIKeyLimits(result.Principal, result.Metadata); blocked {
+					c.AbortWithStatusJSON(status, payload)
+					return
+				}
 			}
 			c.Next()
 			return
@@ -1055,4 +1061,67 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 		}
 		c.AbortWithStatusJSON(statusCode, gin.H{"error": err.Message})
 	}
+}
+
+func enforceAPIKeyLimits(apiKey string, metadata map[string]string) (bool, int, gin.H) {
+	if apiKey == "" || len(metadata) == 0 {
+		return false, 0, nil
+	}
+	if expiresAt := strings.TrimSpace(metadata["expires-at"]); expiresAt != "" {
+		if exp, ok := parseExpiresAt(expiresAt); ok {
+			if time.Now().After(exp) {
+				return true, http.StatusUnauthorized, gin.H{
+					"error":   "api_key_expired",
+					"message": "API key expired",
+				}
+			}
+		} else {
+			log.Warnf("authentication: invalid expires-at value for api key %s", redactKey(apiKey))
+		}
+	}
+	if dailyLimitStr := strings.TrimSpace(metadata["daily-token-limit"]); dailyLimitStr != "" {
+		dailyLimit, err := strconv.ParseInt(dailyLimitStr, 10, 64)
+		if err != nil || dailyLimit <= 0 {
+			if err != nil {
+				log.Warnf("authentication: invalid daily-token-limit for api key %s: %v", redactKey(apiKey), err)
+			}
+			return false, 0, nil
+		}
+		used := limits.GetDailyTokenLimiter().TokensUsed(apiKey, time.Now())
+		if used >= dailyLimit {
+			return true, http.StatusTooManyRequests, gin.H{
+				"error":   "daily_token_limit_exceeded",
+				"message": "Daily token limit exceeded",
+				"limit":   dailyLimit,
+				"used":    used,
+			}
+		}
+	}
+	return false, 0, nil
+}
+
+func parseExpiresAt(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, format := range formats {
+		if t, err := time.ParseInLocation(format, value, time.Local); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func redactKey(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 6 {
+		return "***"
+	}
+	return value[:3] + "..." + value[len(value)-3:]
 }

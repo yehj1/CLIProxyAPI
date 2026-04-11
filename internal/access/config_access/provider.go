@@ -3,8 +3,10 @@ package configaccess
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 )
@@ -16,33 +18,36 @@ func Register(cfg *sdkconfig.SDKConfig) {
 		return
 	}
 
-	keys := normalizeKeys(cfg.APIKeys)
-	if len(keys) == 0 {
+	entries := internalconfig.BuildAPIKeyEntries(cfg.APIKeys, cfg.APIKeyEntries)
+	if len(entries) == 0 {
 		sdkaccess.UnregisterProvider(sdkaccess.AccessProviderTypeConfigAPIKey)
 		return
 	}
 
 	sdkaccess.RegisterProvider(
 		sdkaccess.AccessProviderTypeConfigAPIKey,
-		newProvider(sdkaccess.DefaultAccessProviderName, keys),
+		newProvider(sdkaccess.DefaultAccessProviderName, entries),
 	)
 }
 
 type provider struct {
-	name string
-	keys map[string]struct{}
+	name    string
+	entries map[string]internalconfig.APIKeyEntry
 }
 
-func newProvider(name string, keys []string) *provider {
+func newProvider(name string, entries []internalconfig.APIKeyEntry) *provider {
 	providerName := strings.TrimSpace(name)
 	if providerName == "" {
 		providerName = sdkaccess.DefaultAccessProviderName
 	}
-	keySet := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		keySet[key] = struct{}{}
+	entryMap := make(map[string]internalconfig.APIKeyEntry, len(entries))
+	for _, entry := range entries {
+		if entry.APIKey == "" {
+			continue
+		}
+		entryMap[entry.APIKey] = entry
 	}
-	return &provider{name: providerName, keys: keySet}
+	return &provider{name: providerName, entries: entryMap}
 }
 
 func (p *provider) Identifier() string {
@@ -56,7 +61,7 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 	if p == nil {
 		return nil, sdkaccess.NewNotHandledError()
 	}
-	if len(p.keys) == 0 {
+	if len(p.entries) == 0 {
 		return nil, sdkaccess.NewNotHandledError()
 	}
 	authHeader := r.Header.Get("Authorization")
@@ -89,13 +94,20 @@ func (p *provider) Authenticate(_ context.Context, r *http.Request) (*sdkaccess.
 		if candidate.value == "" {
 			continue
 		}
-		if _, ok := p.keys[candidate.value]; ok {
+		if entry, ok := p.entries[candidate.value]; ok {
+			metadata := map[string]string{
+				"source": candidate.source,
+			}
+			if strings.TrimSpace(entry.ExpiresAt) != "" {
+				metadata["expires-at"] = strings.TrimSpace(entry.ExpiresAt)
+			}
+			if entry.DailyTokenLimit > 0 {
+				metadata["daily-token-limit"] = strconv.FormatInt(entry.DailyTokenLimit, 10)
+			}
 			return &sdkaccess.Result{
 				Provider:  p.Identifier(),
 				Principal: candidate.value,
-				Metadata: map[string]string{
-					"source": candidate.source,
-				},
+				Metadata:  metadata,
 			}, nil
 		}
 	}
@@ -117,25 +129,4 @@ func extractBearerToken(header string) string {
 	return strings.TrimSpace(parts[1])
 }
 
-func normalizeKeys(keys []string) []string {
-	if len(keys) == 0 {
-		return nil
-	}
-	normalized := make([]string, 0, len(keys))
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		trimmedKey := strings.TrimSpace(key)
-		if trimmedKey == "" {
-			continue
-		}
-		if _, exists := seen[trimmedKey]; exists {
-			continue
-		}
-		seen[trimmedKey] = struct{}{}
-		normalized = append(normalized, trimmedKey)
-	}
-	if len(normalized) == 0 {
-		return nil
-	}
-	return normalized
-}
+// normalizeKeys removed: API key entries are normalized in config.BuildAPIKeyEntries.

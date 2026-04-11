@@ -114,6 +114,14 @@ func (h *Handler) PutConfigYAML(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_yaml", "message": "cannot read request body"})
 		return
 	}
+	normalized, normalizeErr := normalizeConfigYAML(body)
+	if normalizeErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_yaml", "message": normalizeErr.Error()})
+		return
+	}
+	if len(normalized) > 0 {
+		body = normalized
+	}
 	var cfg config.Config
 	if err = yaml.Unmarshal(body, &cfg); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_yaml", "message": err.Error()})
