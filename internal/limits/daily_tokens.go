@@ -91,6 +91,10 @@ var defaultDailyLimiter = NewDailyTokenLimiter()
 
 func GetDailyTokenLimiter() *DailyTokenLimiter { return defaultDailyLimiter }
 
+func DailyTokenLimitLocation() *time.Location {
+	return defaultDailyLimiter.location()
+}
+
 func (l *DailyTokenLimiter) SetLocation(loc *time.Location) {
 	if l == nil {
 		return

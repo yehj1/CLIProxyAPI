@@ -142,6 +142,14 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 	const banDuration = 30 * time.Minute
 
 	return func(c *gin.Context) {
+		// Allow unauthenticated access for selected public management endpoints.
+		if c.Request != nil && c.Request.URL != nil {
+			if c.Request.URL.Path == "/v0/management/api-keys/usage" {
+				c.Next()
+				return
+			}
+		}
+
 		c.Header("X-CPA-VERSION", buildinfo.Version)
 		c.Header("X-CPA-COMMIT", buildinfo.Commit)
 		c.Header("X-CPA-BUILD-DATE", buildinfo.BuildDate)
@@ -232,6 +240,7 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		if localClient {
 			if lp := h.localPassword; lp != "" {
 				if subtle.ConstantTimeCompare([]byte(provided), []byte(lp)) == 1 {
+					c.Set("managementAuthorized", true)
 					c.Next()
 					return
 				}
@@ -247,6 +256,7 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 				}
 				h.attemptsMu.Unlock()
 			}
+			c.Set("managementAuthorized", true)
 			c.Next()
 			return
 		}
@@ -268,6 +278,7 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 			h.attemptsMu.Unlock()
 		}
 
+		c.Set("managementAuthorized", true)
 		c.Next()
 	}
 }
