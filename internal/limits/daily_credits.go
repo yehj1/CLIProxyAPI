@@ -33,6 +33,26 @@ func (l *DailyCreditLimiter) CreditsUsed(apiKey string, at time.Time) int64 {
 	return 0
 }
 
+// Snapshot returns a deep copy of all daily credit totals.
+func (l *DailyCreditLimiter) Snapshot() map[string]map[string]int64 {
+	if l == nil {
+		return map[string]map[string]int64{}
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return cloneTotals(l.totals)
+}
+
+// ReplaceTotals replaces all daily credit totals with the provided snapshot.
+func (l *DailyCreditLimiter) ReplaceTotals(totals map[string]map[string]int64) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.totals = cloneTotals(totals)
+}
+
 func (l *DailyCreditLimiter) AddCredits(apiKey string, credits int64, at time.Time) {
 	if l == nil || apiKey == "" || credits <= 0 {
 		return

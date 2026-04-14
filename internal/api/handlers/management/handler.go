@@ -144,7 +144,8 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Allow unauthenticated access for selected public management endpoints.
 		if c.Request != nil && c.Request.URL != nil {
-			if c.Request.URL.Path == "/v0/management/api-keys/usage" {
+			if c.Request.URL.Path == "/v0/management/api-keys/usage" ||
+				c.Request.URL.Path == "/v0/management/usage/details" {
 				c.Next()
 				return
 			}

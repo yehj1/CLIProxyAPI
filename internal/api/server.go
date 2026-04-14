@@ -494,6 +494,7 @@ func (s *Server) registerManagementRoutes() {
 	mgmt.Use(s.managementAvailabilityMiddleware(), s.mgmt.Middleware())
 	{
 		mgmt.GET("/usage", s.mgmt.GetUsageStatistics)
+		mgmt.GET("/usage/details", s.mgmt.GetUsageDetailsPublic)
 		mgmt.GET("/usage/export", s.mgmt.ExportUsageStatistics)
 		mgmt.POST("/usage/import", s.mgmt.ImportUsageStatistics)
 		mgmt.GET("/api-keys/usage", s.mgmt.GetAPIKeyUsage)
@@ -538,6 +539,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/quota-exceeded/switch-preview-model", s.mgmt.PutSwitchPreviewModel)
 
 		mgmt.GET("/api-keys", s.mgmt.GetAPIKeys)
+		mgmt.GET("/api-keys/list", s.mgmt.ListAPIKeys)
+		mgmt.POST("/api-keys/create", s.mgmt.CreateAPIKey)
+		mgmt.DELETE("/api-keys/delete", s.mgmt.DeleteAPIKey)
 		mgmt.PUT("/api-keys", s.mgmt.PutAPIKeys)
 		mgmt.PATCH("/api-keys", s.mgmt.PatchAPIKeys)
 		mgmt.DELETE("/api-keys", s.mgmt.DeleteAPIKeys)

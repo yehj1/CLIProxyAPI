@@ -12,6 +12,8 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/limits"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
@@ -49,6 +51,9 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 		return
 	}
 
+	stopUsagePersist := startDailyUsagePersistence(runCtx, cfg.AuthDir)
+	defer stopUsagePersist()
+
 	err = service.Run(runCtx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Errorf("proxy service exited with error: %v", err)
@@ -73,14 +78,63 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 		return cancelFn, doneCh
 	}
 
+	stopUsagePersist := startDailyUsagePersistence(ctx, cfg.AuthDir)
+
 	go func() {
 		defer close(doneCh)
+		defer stopUsagePersist()
 		if err := service.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Errorf("proxy service exited with error: %v", err)
 		}
 	}()
 
 	return cancelFn, doneCh
+}
+
+func startDailyUsagePersistence(ctx context.Context, authDir string) func() {
+	limitsPath := limits.UsageStorePath(authDir)
+	usagePath := usage.UsageStatsStorePath(authDir)
+	if limitsPath == "" && usagePath == "" {
+		return func() {}
+	}
+	if err := limits.LoadDailyUsage(limitsPath); err != nil {
+		log.Warnf("usage: failed to load daily usage: %v", err)
+	}
+	if err := usage.LoadUsageStatistics(usagePath); err != nil {
+		log.Warnf("usage: failed to load request statistics: %v", err)
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	done := make(chan struct{})
+	stopCh := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := limits.SaveDailyUsage(limitsPath); err != nil {
+					log.Warnf("usage: failed to persist daily usage: %v", err)
+				}
+				if err := usage.SaveUsageStatistics(usagePath); err != nil {
+					log.Warnf("usage: failed to persist request statistics: %v", err)
+				}
+			}
+		}
+	}()
+	return func() {
+		close(stopCh)
+		ticker.Stop()
+		if err := limits.SaveDailyUsage(limitsPath); err != nil {
+			log.Warnf("usage: failed to persist daily usage: %v", err)
+		}
+		if err := usage.SaveUsageStatistics(usagePath); err != nil {
+			log.Warnf("usage: failed to persist request statistics: %v", err)
+		}
+		<-done
+	}
 }
 
 // WaitForCloudDeploy waits indefinitely for shutdown signals in cloud deploy mode

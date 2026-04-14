@@ -64,6 +64,8 @@ type Config struct {
 
 	// UsageStatisticsEnabled toggles in-memory usage aggregation; when false, usage data is discarded.
 	UsageStatisticsEnabled bool `yaml:"usage-statistics-enabled" json:"usage-statistics-enabled"`
+	// UsagePublicKeys allows external clients (by key) to query their own request details.
+	UsagePublicKeys []string `yaml:"usage-public-keys,omitempty" json:"usage-public-keys,omitempty"`
 
 	// DisableCooling disables quota cooldown scheduling when true.
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`
