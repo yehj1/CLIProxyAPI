@@ -53,7 +53,7 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 	entries := config.BuildAPIKeyEntries(h.cfg.APIKeys, h.cfg.APIKeyEntries)
 	loc := limits.DailyTokenLimitLocation()
 	now := time.Now().In(loc)
-	out := make([]apiKeyUsageItem, 0, len(entries))
+	out := make([]gin.H, 0, len(entries))
 	for _, entry := range entries {
 		if entry.APIKey == "" {
 			continue
@@ -61,7 +61,7 @@ func (h *Handler) ListAPIKeys(c *gin.Context) {
 		if filterLower != "" && !strings.Contains(strings.ToLower(entry.APIKey), filterLower) {
 			continue
 		}
-		out = append(out, buildAPIKeyUsageItem(entry, now, loc))
+		out = append(out, buildAPIKeyUsageResponse(entry, now, loc))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"count":    len(out),
@@ -132,17 +132,9 @@ func (h *Handler) CreateAPIKey(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "write_failed", "message": "failed to write config"})
 		return
 	}
-	item := buildAPIKeyUsageItem(newEntry, now, loc)
-	c.JSON(http.StatusOK, gin.H{
-		"api-key":              item.APIKey,
-		"plan":                 plan.Name,
-		"daily-token-limit":    item.DailyTokenLimit,
-		"used-tokens-today":    item.UsedTokensToday,
-		"remaining-tokens-today": item.RemainingTokensToday,
-		"expires-at":           item.ExpiresAt,
-		"timezone":             item.Timezone,
-		"date":                 item.Date,
-	})
+	item := buildAPIKeyUsageResponse(newEntry, now, loc)
+	item["plan"] = plan.Name
+	c.JSON(http.StatusOK, item)
 }
 
 func generateAPIKey() string {
@@ -211,39 +203,66 @@ func (h *Handler) DeleteAPIKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "api-key": key})
 }
 
-type apiKeyUsageItem struct {
-	APIKey               string `json:"api-key"`
-	DailyTokenLimit      int64  `json:"daily-token-limit"`
-	DailyCreditLimit     int64  `json:"daily-credit-limit,omitempty"`
-	ExpiresAt            string `json:"expires-at,omitempty"`
-	UsedTokensToday      int64  `json:"used-tokens-today"`
-	RemainingTokensToday int64  `json:"remaining-tokens-today"`
-	Date                 string `json:"date"`
-	Timezone             string `json:"timezone"`
-}
-
-func buildAPIKeyUsageItem(entry config.APIKeyEntry, now time.Time, loc *time.Location) apiKeyUsageItem {
-	used := limits.GetDailyTokenLimiter().TokensUsed(entry.APIKey, now)
-	remaining := int64(0)
-	if entry.DailyTokenLimit > 0 {
-		remaining = entry.DailyTokenLimit - used
-		if remaining < 0 {
-			remaining = 0
+func buildAPIKeyUsageResponse(entry config.APIKeyEntry, now time.Time, loc *time.Location) gin.H {
+	usedTokens := limits.GetDailyTokenLimiter().TokensUsed(entry.APIKey, now)
+	usedCredits := limits.GetDailyCreditLimiter().CreditsUsed(entry.APIKey, now)
+	creditMode := limits.CreditPerMillionTokens() > 0
+	dailyCreditLimit := entry.DailyCreditLimit
+	if creditMode && dailyCreditLimit <= 0 && entry.DailyTokenLimit > 0 {
+		dailyCreditLimit = entry.DailyTokenLimit
+	}
+	limitEnabled := entry.DailyTokenLimit > 0
+	remainingTokens := int64(0)
+	if limitEnabled {
+		remainingTokens = entry.DailyTokenLimit - usedTokens
+		if remainingTokens < 0 {
+			remainingTokens = 0
 		}
 	}
-	date := now.Format("2006-01-02")
-	tz := ""
-	if loc != nil {
-		tz = loc.String()
+	displayLimit := entry.DailyTokenLimit
+	displayUsed := usedTokens
+	displayRemaining := remainingTokens
+	if creditMode {
+		displayLimit = dailyCreditLimit
+		displayUsed = usedCredits
+		displayRemaining = remainingCredits(dailyCreditLimit, usedCredits)
 	}
-	return apiKeyUsageItem{
-		APIKey:               entry.APIKey,
-		DailyTokenLimit:      entry.DailyTokenLimit,
-		DailyCreditLimit:     entry.DailyCreditLimit,
-		ExpiresAt:            entry.ExpiresAt,
-		UsedTokensToday:      used,
-		RemainingTokensToday: remaining,
-		Date:                 date,
-		Timezone:             tz,
+
+	expiresAtRaw := strings.TrimSpace(entry.ExpiresAt)
+	expired := false
+	expiresAtParsed := ""
+	if expiresAtRaw != "" {
+		if exp, ok := parseExpiresAtInLocation(expiresAtRaw, loc); ok {
+			expired = now.After(exp)
+			expiresAtParsed = exp.In(loc).Format(time.RFC3339)
+		}
+	}
+
+	nextReset := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).Add(24 * time.Hour)
+	secondsUntilReset := int64(nextReset.Sub(now).Seconds())
+	if secondsUntilReset < 0 {
+		secondsUntilReset = 0
+	}
+
+	return gin.H{
+		"api-key":                   entry.APIKey,
+		"token":                     entry.APIKey,
+		"used-tokens-today":         displayUsed,
+		"daily-token-limit":         displayLimit,
+		"limit-enabled":             limitEnabled,
+		"remaining-tokens-today":    displayRemaining,
+		"daily-credit-limit":        dailyCreditLimit,
+		"used-credits-today":        usedCredits,
+		"remaining-credits-today":   remainingCredits(dailyCreditLimit, usedCredits),
+		"credit-per-million-tokens": limits.CreditPerMillionTokens(),
+		"credit-unit-tokens":        limits.CreditUnitTokens(),
+		"credit-mode":               creditMode,
+		"expires-at":                expiresAtRaw,
+		"expires-at-parsed":         expiresAtParsed,
+		"expired":                   expired,
+		"timezone":                  loc.String(),
+		"date":                      now.Format("2006-01-02"),
+		"next-reset-at":             nextReset.Format(time.RFC3339),
+		"seconds-until-reset":       secondsUntilReset,
 	}
 }
